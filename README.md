@@ -1,93 +1,315 @@
-# netforge
+# NetForge — Windows DNS/DHCP TUI Manager
 
+A terminal UI for managing Windows DNS and DHCP servers from Linux or macOS,
+using WinRM over NTLM or Kerberos. No domain membership required.
 
+---
 
-## Getting started
+## Architecture
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
-
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+Each DNS and DHCP server gets its own **direct WinRM connection** from the
+Linux machine. There is no jump host and no `-ComputerName` forwarding, which
+avoids the NTLM double-hop problem entirely.
 
 ```
-cd existing_repo
-git remote add origin https://repo.example.com/felix/netforge.git
-git branch -M master
-git push -uf origin master
+Linux / macOS
+  ├─ WinRM (NTLM or Kerberos) → dc01.example.com   (DNS — cmdlets run locally)
+  ├─ WinRM (NTLM or Kerberos) → dc02.example.com   (DNS — cmdlets run locally)
+  ├─ WinRM (NTLM or Kerberos) → dhcp01.example.com (DHCP — cmdlets run locally)
+  └─ WinRM (NTLM or Kerberos) → dhcp02.example.com (DHCP — cmdlets run locally)
 ```
 
-## Integrate with your tools
+RSAT must be installed on each target server (`Install-WindowsFeature RSAT-DNS-Server`
+/ `Install-WindowsFeature RSAT-DHCP`) so the PowerShell cmdlets are available.
 
-* [Set up project integrations](https://repo.example.com/felix/netforge/-/settings/integrations)
-
-## Collaborate with your team
-
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
-
-## Test and Deploy
-
-Use the built-in continuous integration in GitLab.
-
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
-
-***
-
-# Editing this README
-
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
-
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+---
 
 ## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+
+### 1. System packages
+
+**Debian / Ubuntu**
+```bash
+apt install python3-pip python3-venv krb5-user libkrb5-dev python3-dev gcc
+```
+
+**RHEL / CentOS / Rocky**
+```bash
+yum install python3-pip krb5-workstation krb5-libs python3-devel gcc
+```
+
+**macOS**
+```bash
+brew install krb5
+```
+
+### 2. Create a virtual environment (recommended)
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+### 3. Install netforge
+
+**NTLM only (simplest)**
+```bash
+pip install -e .
+```
+
+**With Kerberos support**
+```bash
+pip install -e ".[kerberos]"
+```
+
+**Headless / no desktop keyring (servers, containers, SSH sessions)**
+```bash
+pip install -e ".[headless]"
+# or both:
+pip install -e ".[kerberos,headless]"
+```
+
+---
+
+## Windows Server Setup
+
+Run the following on **each** DNS and DHCP server as Administrator:
+
+```powershell
+# Enable WinRM
+winrm quickconfig -Force
+
+# Allow NTLM authentication
+Set-Item WSMan:\localhost\Service\Auth\Negotiate $true
+
+# Open firewall — HTTP (5985) or HTTPS (5986)
+netsh advfirewall firewall add rule name="WinRM HTTP" `
+    protocol=TCP dir=in localport=5985 action=allow
+
+# Install RSAT on DNS servers
+Install-WindowsFeature RSAT-DNS-Server
+
+# Install RSAT on DHCP servers
+Install-WindowsFeature RSAT-DHCP
+```
+
+**Optional — HTTPS (recommended for production)**
+```powershell
+$cert = New-SelfSignedCertificate -DnsName "dc01.example.com" `
+    -CertStoreLocation Cert:\LocalMachine\My
+New-Item -Path WSMan:\localhost\Listener -Transport HTTPS `
+    -Address * -CertificateThumbPrint $cert.Thumbprint -Force
+netsh advfirewall firewall add rule name="WinRM HTTPS" `
+    protocol=TCP dir=in localport=5986 action=allow
+```
+
+---
+
+## Authentication
+
+### NTLM (default — works everywhere)
+No extra setup. Enter `DOMAIN\username` and password in the login screen.
+Passwords are stored in the OS keyring (Gnome Keyring, macOS Keychain, KWallet)
+— never written to disk in plaintext.
+
+### Kerberos (recommended for production)
+Requires `pip install -e ".[kerberos]"` and system Kerberos libraries.
+
+**Configure `/etc/krb5.conf`:**
+```ini
+[libdefaults]
+    default_realm = EXAMPLE.COM
+    dns_lookup_kdc = true
+    forwardable = true
+
+[realms]
+    EXAMPLE.COM = {
+        kdc = dc01.example.com
+        admin_server = dc01.example.com
+    }
+
+[domain_realm]
+    .example.com = EXAMPLE.COM
+    example.com  = EXAMPLE.COM
+```
+
+**Authenticate:**
+```bash
+# Interactive (valid for ~10 hours)
+kinit username@EXAMPLE.COM
+
+# Headless / automation via keytab
+kinit -kt /etc/netforge/username.keytab username@EXAMPLE.COM
+
+# Verify ticket
+klist
+```
+
+Then select **Kerberos** in the netforge login screen — the password field is
+ignored and the OS ticket cache is used automatically.
+
+---
 
 ## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+```bash
+# Launch interactively
+python -m netforge
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+# Pre-fill host and username (password prompted in UI)
+python -m netforge --host dc01.example.com --user "EXAMPLE\administrator"
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+# Use HTTP instead of HTTPS
+python -m netforge --no-ssl
+```
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+---
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+## Config file — `~/.netforge.yaml`
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+Passwords are stored in the **OS keyring only** — never written to this file.
 
-## License
-For open source projects, say how it is licensed.
+```yaml
+default_server: prod
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+servers:
+
+  # Production — separate DNS and DHCP servers
+  prod:
+    host: mgmt-server.example.com  # primary host (used for credential probe)
+    username: EXAMPLE\svc-dnsadmin
+    port: 5985
+    ssl: false
+    transport: ntlm                # ntlm (default) or kerberos
+    dns_servers:                   # each gets a direct WinRM connection
+      - dc01.example.com
+      - dc02.example.com
+    dhcp_servers:
+      - dhcp01.example.com
+      - dhcp02.example.com
+      - dhcp03.example.com
+
+  # Lab — DNS and DHCP on same DC, Kerberos auth
+  lab:
+    host: lab-dc.lab.example.com
+    username: adminuser@LAB.EXAMPLE.COM  # Kerberos UPN format
+    port: 5985
+    ssl: false
+    transport: kerberos
+    # dns_servers / dhcp_servers omitted = connect directly to host
+
+  # HTTPS example
+  prod-secure:
+    host: dc01.example.com
+    username: EXAMPLE\administrator
+    port: 5986
+    ssl: true
+    transport: ntlm
+```
+
+**Config field reference**
+
+| Field | Required | Default | Notes |
+|---|---|---|---|
+| `host` | yes | — | Primary host — used for credential probe |
+| `username` | yes | — | `DOMAIN\user` for NTLM, `user@REALM` for Kerberos |
+| `port` | no | 5985 | 5985 HTTP, 5986 HTTPS |
+| `ssl` | no | false | Set true for HTTPS |
+| `transport` | no | ntlm | `ntlm` or `kerberos` |
+| `dns_servers` | no | [host] | List of DNS servers to manage directly |
+| `dhcp_servers` | no | [host] | List of DHCP servers to manage directly |
+
+---
+
+## DNS Features
+
+- **Grouped zone tree** — Forward Lookup Zones, Reverse Lookup Zones, Trust Points,
+  Conditional Forwarders — sorted alphabetically, matching RSAT DNS Manager layout
+- **Internal zone filter** — `_msdcs`, `_sites`, `_tcp`, `_udp` hidden by default;
+  press **H** to toggle visibility
+- **Record types** — A, AAAA, CNAME, PTR — full create / edit / delete
+- **Filter** — type to filter records by name or data
+- **Multi-server** — zones from multiple DNS servers shown in grouped tree
+
+## DHCP Features
+
+- **Scope list** — all scopes from all configured DHCP servers, active/inactive indicated
+- **Leases view** — all current leases with state, MAC, hostname, expiry
+- **Reservations view** — all reservations with MAC, name, description, type
+- **Filter** — filter by IP, MAC, hostname, or description
+- **New reservation** — create from scratch
+- **Edit reservation** — update name and description
+- **Delete reservation** — remove a reservation
+- **Promote lease** — convert an active dynamic lease to a permanent reservation
+  (reads MAC and hostname from the existing lease automatically)
+- **Multi-server** — scopes from multiple DHCP servers shown grouped by server
+
+---
+
+## Keybindings
+
+| Key | Action |
+|---|---|
+| F1 | DNS panel |
+| F2 | DHCP panel |
+| F3 | Servers panel |
+| N | New record / reservation |
+| E | Edit selected |
+| D | Delete selected |
+| P | Promote lease → reservation (DHCP leases view only) |
+| H | Toggle internal AD zones (DNS only) |
+| R | Refresh current panel |
+| Ctrl+D | Re-run connection diagnostics |
+| Ctrl+L | Reconnect |
+| Escape | Close modal |
+| F10 / Q | Quit |
+
+---
+
+## Log file
+
+`~/.netforge.log` — full debug log written on every run. Includes all WinRM
+connections, PowerShell commands, JSON responses, and error tracebacks.
+Useful for diagnosing connection or permission issues.
+
+```bash
+tail -f ~/.netforge.log          # watch live
+grep ERROR ~/.netforge.log       # show only errors
+```
+
+---
+
+## Troubleshooting
+
+**`WIN32 5` / Access Denied on DNS or DHCP cmdlets**
+The account needs to be a member of `DnsAdmins` (for DNS) or
+`DHCP Administrators` (for DHCP) on the target server, or be a Domain Admin.
+```powershell
+Add-ADGroupMember -Identity "DnsAdmins"         -Members "username"
+Add-ADGroupMember -Identity "DHCP Administrators" -Members "username"
+```
+
+**`KDC reply did not match expectations` (Kerberos)**
+The realm in `/etc/krb5.conf` must be uppercase and match the AD domain exactly.
+Check `default_realm = EXAMPLE.COM` not `example.com`.
+
+**`No module named 'gssapi'` (Kerberos)**
+```bash
+apt install libkrb5-dev python3-dev gcc
+pip install ".[kerberos]"
+```
+
+**Keyring errors on headless servers**
+```bash
+pip install ".[headless]"
+```
+
+**Logon banners in output**
+If Windows servers display a logon banner (e.g. "Type logoff and press Enter…"),
+netforge automatically strips it from PowerShell output before JSON parsing.
+
+**WinRM HTTP 400 errors**
+Caused by concurrent shell limits. netforge uses one session per target server
+with a threading lock, so this should not occur. If it does, increase the limit:
+```powershell
+Set-Item WSMan:\localhost\Shell\MaxShellsPerUser 10
+```
