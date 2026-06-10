@@ -5,6 +5,30 @@ using WinRM over NTLM or Kerberos. No domain membership required.
 
 ---
 
+## Screenshots
+
+**Login / connect**
+
+<img src="docs/screenshots/01_login.svg" alt="Login modal" width="900">
+
+**DNS panel — zone tree + record table**
+
+<img src="docs/screenshots/02_dns_panel.svg" alt="DNS panel" width="900">
+
+**DHCP panel — active leases**
+
+<img src="docs/screenshots/03_dhcp_leases.svg" alt="DHCP leases" width="900">
+
+**DHCP panel — reservations**
+
+<img src="docs/screenshots/04_dhcp_reservations.svg" alt="DHCP reservations" width="900">
+
+**Servers panel — saved profiles**
+
+<img src="docs/screenshots/05_servers_panel.svg" alt="Servers panel" width="900">
+
+---
+
 ## Architecture
 
 Each DNS and DHCP server gets its own **direct WinRM connection** from the
