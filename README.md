@@ -337,3 +337,12 @@ with a threading lock, so this should not occur. If it does, increase the limit:
 ```powershell
 Set-Item WSMan:\localhost\Shell\MaxShellsPerUser 10
 ```
+
+## License
+
+GNU Affero General Public License v3.0 — see [LICENSE](LICENSE).
+
+AGPLv3 means modifications must be released with source available — including when
+you run a modified NetForge as a **network service** (not only when you distribute
+binaries). If AGPL doesn't fit your use, a separate **commercial license** is
+available; open an issue or get in touch.
